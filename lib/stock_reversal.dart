@@ -66,7 +66,7 @@ class _StockReversalPageState extends State<StockReversalPage> {
   Future<void> fetchTargetLocations() async {
     try {
       final response = await http.get(
-        Uri.parse("https://localhost:7278/api/SAP/GetTargetLocation?screen1=2"),
+        Uri.parse("http://192.168.20.27:86/api/SAP/GetTargetLocation?screen1=2"),
       );
 
       if (response.statusCode == 200) {
@@ -89,7 +89,7 @@ class _StockReversalPageState extends State<StockReversalPage> {
   Future<void> fetchRemList() async {
     try {
       final response = await http.get(
-        Uri.parse("https://localhost:7278/api/SAP/GetStockOutRem"),
+        Uri.parse("http://192.168.20.27:86/api/SAP/GetStockOutRem"),
       );
 
       if (response.statusCode == 200) {
@@ -123,7 +123,7 @@ class _StockReversalPageState extends State<StockReversalPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          "https://localhost:7278/api/SAP/GetBarcodeData?charg=$charg&lgort=$lgort&scanName=$scanName",
+          "http://192.168.20.27:86/api/SAP/GetBarcodeData?charg=$charg&lgort=$lgort&scanName=$scanName",
         ),
       );
 
@@ -195,7 +195,7 @@ class _StockReversalPageState extends State<StockReversalPage> {
 
   try {
     final uri = Uri.parse(
-      "https://localhost:7278/api/SAP/PostStockReversalData"
+      "http://192.168.20.27:86/api/SAP/PostStockReversalData"
       "?rem=$rem"
       "&selectedType=$selectedType"
       "&pmLoc=$pmLoc"

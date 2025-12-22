@@ -81,7 +81,7 @@ class _DoPickingPageState extends State<DoPickingPage> {
 
     try {
       final response = await http.get(Uri.parse(
-          "https://localhost:7278/api/SAP/GetDoPickingData?batchNo=$batchNo&scanName=$scanName&shipmentNo=$shipmentNo"));
+          "http://192.168.20.27:86/api/SAP/GetDoPickingData?batchNo=$batchNo&scanName=$scanName&shipmentNo=$shipmentNo"));
 
       if (response.statusCode == 200) {
         final xmlDoc = xml.XmlDocument.parse(response.body);
@@ -154,7 +154,7 @@ class _DoPickingPageState extends State<DoPickingPage> {
 
     try {
       final response = await http.post(Uri.parse(
-          "https://localhost:7278/api/SAP/PostDoPickingData?shipmentNo=$shipmentNo&scanName=$scanName"));
+          "http://192.168.20.27:86/api/SAP/PostDoPickingData?shipmentNo=$shipmentNo&scanName=$scanName"));
 
       if (response.statusCode == 200) {
         final xmlDoc = xml.XmlDocument.parse(response.body);

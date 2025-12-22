@@ -44,7 +44,7 @@ class _StockInPageState extends State<StockInPage> {
   Future<void> fetchTargetLocations() async {
     try {
       final url = Uri.parse(
-          "https://localhost:7278/api/SAP/GetTargetLocation?screen1=1");
+          "http://192.168.20.27:86/api/SAP/GetTargetLocation?screen1=1");
       final response = await http.get(url);
 
       if (response.statusCode == 200) {
@@ -89,7 +89,7 @@ class _StockInPageState extends State<StockInPage> {
 
     try {
       final url = Uri.parse(
-          "https://localhost:7278/api/SAP/GetBarcodeData?charg=$batch&lgort=$fgLoc&scanName=$scanName");
+          "http://192.168.20.27:86/api/SAP/GetBarcodeData?charg=$batch&lgort=$fgLoc&scanName=$scanName");
       final response = await http.get(url);
 
       if (response.statusCode == 200) {
