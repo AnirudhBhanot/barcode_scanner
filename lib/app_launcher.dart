@@ -11,7 +11,7 @@ class AppLauncher extends StatelessWidget {
     final scannerName = prefs.getString('scannerName');
 
     if (scannerName != null && scannerName.isNotEmpty) {
-      return const HomePage();
+      return HomePage(scannerName: scannerName,);
     }
     return const ScannerNamePage();
   }

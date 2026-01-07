@@ -59,7 +59,7 @@ class _ScannerNamePageState extends State<ScannerNamePage> {
 
   Navigator.pushReplacement(
     context,
-    MaterialPageRoute(builder: (_) => const HomePage()),
+    MaterialPageRoute(builder: (_) => HomePage(scannerName: scannerName,)),
   );
 }
 

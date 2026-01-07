@@ -13,7 +13,13 @@ class StockReversalPage extends StatefulWidget {
 }
 
 class _StockReversalPageState extends State<StockReversalPage> {
+  int scanCount = 0;
+  final TextEditingController scanCountController = TextEditingController(
+    text: "0",
+  );
+
   final TextEditingController batchController = TextEditingController();
+  final TextEditingController descController = TextEditingController();
 
   // Field controllers (non-editable)
   final Map<String, TextEditingController> fieldControllers = {
@@ -39,6 +45,8 @@ class _StockReversalPageState extends State<StockReversalPage> {
   List<String> pmLocList = [];
   String? selectedPmLoc;
 
+  final FocusNode batchFocus = FocusNode();
+
   @override
   void initState() {
     super.initState();
@@ -62,11 +70,22 @@ class _StockReversalPageState extends State<StockReversalPage> {
     }
   }
 
+  void _clearAfterScan() {
+    fieldControllers["Batch"]?.clear();
+
+    // 🔥 scanner instantly ready again
+    Future.delayed(const Duration(milliseconds: 80), () {
+      if (mounted) batchFocus.requestFocus();
+    });
+  }
+
   // ✅ Fetch Target Location list for screen = 2
   Future<void> fetchTargetLocations() async {
     try {
       final response = await http.get(
-        Uri.parse("http://192.168.20.27:86/api/SAP/GetTargetLocation?screen1=2"),
+        Uri.parse(
+          "http://192.168.20.27:94/api/SAP/GetTargetLocation?screen1=2",
+        ),
       );
 
       if (response.statusCode == 200) {
@@ -89,7 +108,7 @@ class _StockReversalPageState extends State<StockReversalPage> {
   Future<void> fetchRemList() async {
     try {
       final response = await http.get(
-        Uri.parse("http://192.168.20.27:86/api/SAP/GetStockOutRem"),
+        Uri.parse("http://192.168.20.27:94/api/SAP/GetStockOutRem"),
       );
 
       if (response.statusCode == 200) {
@@ -123,12 +142,21 @@ class _StockReversalPageState extends State<StockReversalPage> {
     try {
       final response = await http.get(
         Uri.parse(
-          "http://192.168.20.27:86/api/SAP/GetBarcodeData?charg=$charg&lgort=$lgort&scanName=$scanName",
+          "http://192.168.20.27:94/api/SAP/GetBarcodeData?charg=$charg&lgort=$lgort&scanName=$scanName",
         ),
       );
 
       if (response.statusCode == 200) {
         final xmlDoc = xml.XmlDocument.parse(response.body);
+
+        final messageElement =
+            xmlDoc.findAllElements('LV_MESS', namespace: '*').isNotEmpty
+            ? xmlDoc.findAllElements('LV_MESS', namespace: '*').first
+            : null;
+
+        final message =
+            messageElement?.innerText.trim() ?? "Scanned successfully";
+
         final items = xmlDoc.findAllElements('item').toList();
 
         if (items.length > 1) {
@@ -153,10 +181,25 @@ class _StockReversalPageState extends State<StockReversalPage> {
                 item.getElement('TOTAL')?.innerText ?? '';
             fieldControllers["Total Weight"]?.text =
                 item.getElement('TOTAL_WEIGHT')?.innerText ?? '';
+
+            descController.text = item.getElement('BELOW_LOC')?.innerText ?? '';
+
+            // ✅ AUTO INCREMENT SCAN COUNT
+            scanCount++;
+            scanCountController.text = scanCount.toString();
           });
-          ScaffoldMessenger.of(
-            context,
-          ).showSnackBar(const SnackBar(content: Text("Scanned Successfully")));
+
+          // ✅ SUCCESS MESSAGE
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text("✅ $message | Scans: $scanCount"),
+              backgroundColor: Colors.green.shade700,
+              duration: const Duration(seconds: 1),
+            ),
+          );
+
+          // 🔥 CLEAR BATCH & READY FOR NEXT SCAN
+          _clearAfterScan();
         } else {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text("No data found for this Batch No")),
@@ -177,82 +220,80 @@ class _StockReversalPageState extends State<StockReversalPage> {
   }
 
   Future<void> postData() async {
-  final rem = selectedRem; // The selected REM value from dropdown
-  final selectedType = selectedOption; // Copier / Repack / Reprocess
-  final pmLoc = selectedPmLoc ?? ""; // Selected PM Location
-  final scanName = widget.scannerName; // Scanner name or device ID
-  const operation = "P"; // "P" when posting (will be "S" by default for scan)
+    final rem = selectedRem; // The selected REM value from dropdown
+    final selectedType = selectedOption; // Copier / Repack / Reprocess
+    final pmLoc = selectedPmLoc ?? ""; // Selected PM Location
+    final scanName = widget.scannerName; // Scanner name or device ID
+    const operation = "P"; // "P" when posting (will be "S" by default for scan)
 
-  // Validate required fields
-  if (rem.isEmpty || selectedType.isEmpty || pmLoc.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(
-        content: Text("Please fill all required fields before posting."),
-      ),
-    );
-    return;
-  }
-
-  try {
-    final uri = Uri.parse(
-      "http://192.168.20.27:86/api/SAP/PostStockReversalData"
-      "?rem=$rem"
-      "&selectedType=$selectedType"
-      "&pmLoc=$pmLoc"
-      "&scanName=$scanName"
-      "&operation=$operation",
-    );
-
-    final response = await http.post(uri);
-
-    if (response.statusCode == 200) {
-      final rawXml = response.body.trim();
-      final xmlDoc = xml.XmlDocument.parse(rawXml);
-
-      final messageElement = xmlDoc.findAllElements('LV_MESS', namespace: '*').isNotEmpty
-          ? xmlDoc.findAllElements('LV_MESS', namespace: '*').first
-          : null;
-
-      final messageTypeElement = xmlDoc.findAllElements('LV_MESS_TYPE', namespace: '*').isNotEmpty
-          ? xmlDoc.findAllElements('LV_MESS_TYPE', namespace: '*').first
-          : null;
-
-      final message = messageElement?.innerText.trim() ?? "Unknown SAP Response";
-      final messageType = messageTypeElement?.innerText.trim().toUpperCase() ?? "";
-
-      if (messageType == "S" || message.contains("Successful")) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("✅ $message")),
-        );
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text("❌ $message")),
-        );
-      }
-    } else {
+    // Validate required fields
+    if (rem.isEmpty || selectedType.isEmpty || pmLoc.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            "Error posting data: ${response.statusCode} - ${response.reasonPhrase}",
-          ),
+        const SnackBar(
+          content: Text("Please fill all required fields before posting."),
         ),
       );
+      return;
     }
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text("Error posting to SAP: $e")),
-    );
+
+    try {
+      final uri = Uri.parse(
+        "http://192.168.20.27:94/api/SAP/PostStockReversalData"
+        "?rem=$rem"
+        "&selectedType=$selectedType"
+        "&pmLoc=$pmLoc"
+        "&scanName=$scanName"
+        "&operation=$operation",
+      );
+
+      final response = await http.post(uri);
+
+      if (response.statusCode == 200) {
+        final rawXml = response.body.trim();
+        final xmlDoc = xml.XmlDocument.parse(rawXml);
+
+        final messageElement =
+            xmlDoc.findAllElements('LV_MESS', namespace: '*').isNotEmpty
+            ? xmlDoc.findAllElements('LV_MESS', namespace: '*').first
+            : null;
+
+        final messageTypeElement =
+            xmlDoc.findAllElements('LV_MESS_TYPE', namespace: '*').isNotEmpty
+            ? xmlDoc.findAllElements('LV_MESS_TYPE', namespace: '*').first
+            : null;
+
+        final message =
+            messageElement?.innerText.trim() ?? "Unknown SAP Response";
+        final messageType =
+            messageTypeElement?.innerText.trim().toUpperCase() ?? "";
+
+        if (messageType == "S" || message.contains("Successful")) {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text("✅ $message")));
+        } else {
+          ScaffoldMessenger.of(
+            context,
+          ).showSnackBar(SnackBar(content: Text("❌ $message")));
+        }
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              "Error posting data: ${response.statusCode} - ${response.reasonPhrase}",
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text("Error posting to SAP: $e")));
+    }
   }
-}
-
-
-
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth < 600;
-
     return Scaffold(
       extendBodyBehindAppBar: true,
       appBar: AppBar(
@@ -270,189 +311,215 @@ class _StockReversalPageState extends State<StockReversalPage> {
         iconTheme: const IconThemeData(color: Colors.white),
       ),
       backgroundColor: const Color(0xFF0B5D1E),
-      body: Container(
-        width: double.infinity,
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [ Color(0xFF0B5D1E),Color(0xFF1E7F35)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+      body: SafeArea(
+        child: Container(
+          width: double.infinity,
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFF0B5D1E), Color(0xFF1E7F35)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
           ),
-        ),
-        child: Center(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final cardWidth = isMobile
-                  ? screenWidth * 0.9
-                  : (constraints.maxWidth * 0.5).clamp(500.0, 600.0);
-              final cardHeight = isMobile ? 780.0 : 760.0;
-
-              return Card(
-                elevation: 30,
-                shadowColor: Color(0xFF0B5D1E).withOpacity(0.5),
-                color: Colors.white.withOpacity(0.12),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(30),
-                ),
-                child: Container(
-                  width: cardWidth,
-                  height: cardHeight,
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 24,
-                    vertical: 18,
+          child: Center(
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return Card(
+                  elevation: 30,
+                  shadowColor: Color(0xFF0B5D1E).withOpacity(0.5),
+                  color: Colors.white.withOpacity(0.12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(30),
                   ),
-                  child: Column(
-                    children: [
-                      // Dropdown for REM
-                      DropdownButtonFormField<String>(
-                        value: selectedRem.isEmpty ? null : selectedRem,
-                        dropdownColor: const Color(0xFF2E1B4B),
-                        decoration: InputDecoration(
-                          labelText: "Rem.",
-                          labelStyle: const TextStyle(color: Colors.white70),
-                          filled: true,
-                          fillColor: Colors.white.withOpacity(0.1),
-                          enabledBorder: OutlineInputBorder(
-                            borderSide: const BorderSide(color: Colors.white24),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                          focusedBorder: OutlineInputBorder(
-                            borderSide: const BorderSide(
-                              color: Colors.deepPurpleAccent,
+                  child: Container(
+                    constraints: BoxConstraints(
+                      maxWidth: 760,
+                      maxHeight: MediaQuery.of(context).size.height * 0.88,
+                    ),
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 10,
+                    ),
+                    child: SingleChildScrollView(
+                      child: Column(
+                        children: [
+                          // Dropdown for REM
+                          DropdownButtonFormField<String>(
+                            value: selectedRem.isEmpty ? null : selectedRem,
+                            dropdownColor: const Color.fromARGB(255, 67, 133, 58),
+                            decoration: InputDecoration(
+                              labelText: "Rem.",
+                              labelStyle: const TextStyle(
+                                color: Colors.white70,
+                              ),
+                              filled: true,
+                              fillColor: Colors.white.withOpacity(0.1),
+                              enabledBorder: OutlineInputBorder(
+                                borderSide: const BorderSide(
+                                  color: Colors.white24,
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderSide: const BorderSide(
+                                  color: Color.fromARGB(255, 40, 107, 51),
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                             ),
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        iconEnabledColor: Colors.white,
-                        style: const TextStyle(color: Colors.white),
-                        items: remList
-                            .map(
-                              (rem) => DropdownMenuItem(
-                                value: rem,
-                                child: Text(
-                                  rem,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontWeight: FontWeight.w500,
+                            iconEnabledColor: Colors.white,
+                            style: const TextStyle(color: Colors.white),
+                            items: remList
+                                .map(
+                                  (rem) => DropdownMenuItem(
+                                    value: rem,
+                                    child: Text(
+                                      rem,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w500,
+                                      ),
+                                    ),
                                   ),
-                                ),
-                              ),
-                            )
-                            .toList(),
-                        onChanged: (value) =>
-                            setState(() => selectedRem = value ?? ""),
-                      ),
-
-                      const SizedBox(height: 12),
-
-                      // Radio Buttons
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          _buildRadio("Reprocess"),
-                          _buildRadio("Repack"),
-                          _buildRadio("Copier"),
-                        ],
-                      ),
-
-                      const SizedBox(height: 16),
-
-                      _buildTextField("Batch", batchController, true),
-                      const SizedBox(height: 8),
-
-                      // ✅ PM Loc Dropdown
-                      DropdownButtonFormField<String>(
-                        value: selectedPmLoc,
-                        dropdownColor: Color(0xFF0B5D1E),
-                        decoration: InputDecoration(
-                          labelText: "PM Loc.",
-                          labelStyle: const TextStyle(color: Colors.white70),
-                          filled: true,
-                          fillColor: Colors.white.withOpacity(0.1),
-                          enabledBorder: OutlineInputBorder(
-                            borderSide: const BorderSide(color: Colors.white24),
-                            borderRadius: BorderRadius.circular(12),
+                                )
+                                .toList(),
+                            onChanged: (value) =>
+                                setState(() => selectedRem = value ?? ""),
                           ),
-                          focusedBorder: OutlineInputBorder(
-                            borderSide: const BorderSide(
-                              color: Color(0xFF0B5D1E),
+
+                          const SizedBox(height: 8),
+
+                          // Radio Buttons
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              _buildRadio("Reprocess"),
+                              _buildRadio("Repack"),
+                              _buildRadio("Copier"),
+                            ],
+                          ),
+
+                          const SizedBox(height: 10),
+
+                          _buildBatchField(),
+                          const SizedBox(height: 8),
+
+                          // ✅ PM Loc Dropdown
+                          DropdownButtonFormField<String>(
+                            value: selectedPmLoc,
+                            dropdownColor: Color(0xFF0B5D1E),
+                            decoration: InputDecoration(
+                              labelText: "PM Loc.",
+                              labelStyle: const TextStyle(
+                                color: Colors.white70,
+                              ),
+                              filled: true,
+                              fillColor: Colors.white.withOpacity(0.1),
+                              enabledBorder: OutlineInputBorder(
+                                borderSide: const BorderSide(
+                                  color: Colors.white24,
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              focusedBorder: OutlineInputBorder(
+                                borderSide: const BorderSide(
+                                  color: Color(0xFF0B5D1E),
+                                ),
+                                borderRadius: BorderRadius.circular(12),
+                              ),
                             ),
-                            borderRadius: BorderRadius.circular(12),
+                            iconEnabledColor: Colors.white,
+                            style: const TextStyle(color: Colors.white),
+                            items: pmLocList
+                                .map(
+                                  (loc) => DropdownMenuItem(
+                                    value: loc,
+                                    child: Text(
+                                      loc,
+                                      style: const TextStyle(
+                                        color: Colors.white,
+                                      ),
+                                    ),
+                                  ),
+                                )
+                                .toList(),
+                            onChanged: (value) {
+                              setState(() {
+                                selectedPmLoc = value;
+                                _checkAutoFetch();
+                              });
+                            },
                           ),
-                        ),
-                        iconEnabledColor: Colors.white,
-                        style: const TextStyle(color: Colors.white),
-                        items: pmLocList
-                            .map(
-                              (loc) => DropdownMenuItem(
-                                value: loc,
-                                child: Text(
-                                  loc,
-                                  style: const TextStyle(color: Colors.white),
+
+                          const SizedBox(height: 8,),
+
+                          _buildDescField(),
+
+                          const SizedBox(height: 8,),
+
+                          _buildScanField(),
+
+                          const SizedBox(height: 8),
+
+                          // Non-editable fields
+                          GridView.builder(
+                            shrinkWrap: true,
+                            itemCount: fieldControllers.length,
+                            physics: const NeverScrollableScrollPhysics(),
+                            gridDelegate:
+                                const SliverGridDelegateWithFixedCrossAxisCount(
+                                  crossAxisCount: 2,
+                                  mainAxisSpacing: 8,
+                                  crossAxisSpacing: 8,
+                                  childAspectRatio:
+                                      3.4, // ✅ shorter fields, better fit
                                 ),
+                            itemBuilder: (context, index) {
+                              final entry = fieldControllers.entries.elementAt(
+                                index,
+                              );
+                              return _buildTextField(
+                                entry.key,
+                                entry.value,
+                                false,
+                              );
+                            },
+                          ),
+
+                          const SizedBox(height: 6),
+
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                            children: [
+                              _buildButton(
+                                "Post",
+                                Colors.deepPurpleAccent,
+                                postData,
                               ),
-                            )
-                            .toList(),
-                        onChanged: (value) {
-                          setState(() {
-                            selectedPmLoc = value;
-                            _checkAutoFetch();
-                          });
-                        },
-                      ),
-
-                      const SizedBox(height: 8),
-
-                      // Non-editable fields
-                      Expanded(
-                        child: GridView.count(
-                          crossAxisCount: 2,
-                          physics: const NeverScrollableScrollPhysics(),
-                          crossAxisSpacing: 14,
-                          mainAxisSpacing: 14,
-                          childAspectRatio: isMobile ? 3.2 : 3.5,
-                          children: fieldControllers.entries
-                              .map(
-                                (entry) => _buildTextField(
-                                  entry.key,
-                                  entry.value,
-                                  false,
-                                ),
-                              )
-                              .toList(),
-                        ),
-                      ),
-
-                      const SizedBox(height: 6),
-
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                        children: [
-                          _buildButton(
-                            "Post",
-                            Colors.deepPurpleAccent,
-                            postData,
+                              _buildButton("Clear", Colors.blueAccent, () {
+                                batchController.clear();
+                                selectedPmLoc = null;
+                                fieldControllers.values.forEach(
+                                  (c) => c.clear(),
+                                );
+                                _setCurrentDprDate();
+                                setState(() {
+                                  selectedOption = "";
+                                  selectedRem = "";
+                                });
+                              }),
+                              _buildButton("Back", Colors.orangeAccent, () {
+                                Navigator.pop(context);
+                              }),
+                            ],
                           ),
-                          _buildButton("Clear", Colors.blueAccent, () {
-                            batchController.clear();
-                            selectedPmLoc = null;
-                            fieldControllers.values.forEach((c) => c.clear());
-                            _setCurrentDprDate();
-                            setState(() {
-                              selectedOption = "";
-                              selectedRem = "";
-                            });
-                          }),
-                          _buildButton("Back", Colors.orangeAccent, () {
-                            Navigator.pop(context);
-                          }),
                         ],
                       ),
-                    ],
+                    ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
         ),
       ),
@@ -474,31 +541,103 @@ class _StockReversalPageState extends State<StockReversalPage> {
     );
   }
 
-  Widget _buildTextField(
-    String label,
-    TextEditingController controller,
-    bool isEditable,
-  ) {
+  Widget _buildBatchField() {
     return TextFormField(
-      controller: controller,
-      enabled: isEditable,
+      controller: batchController,
+      autofocus: true, // 🔥 critical for scanner
+      keyboardType: TextInputType.text,
+      textInputAction: TextInputAction.done,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 18,
+        fontWeight: FontWeight.w700,
+      ),
       decoration: InputDecoration(
-        labelText: label,
+        labelText: "Batch",
         labelStyle: const TextStyle(color: Colors.white70),
         filled: true,
-        fillColor: Colors.white.withOpacity(0.08),
+        fillColor: Colors.white.withOpacity(0.15),
+        contentPadding: const EdgeInsets.symmetric(
+          vertical: 18, // BIG height = reliable scan
+          horizontal: 14,
+        ),
         enabledBorder: OutlineInputBorder(
           borderSide: const BorderSide(color: Colors.white24),
           borderRadius: BorderRadius.circular(12),
         ),
         focusedBorder: OutlineInputBorder(
-          borderSide: const BorderSide(color: Colors.deepPurpleAccent),
+          borderSide: const BorderSide(
+            color: Color.fromARGB(255, 52, 128, 68),
+            width: 2,
+          ),
           borderRadius: BorderRadius.circular(12),
         ),
       ),
-      style: TextStyle(
+    );
+  }
+
+  Widget _buildDescField() {
+    return TextFormField(
+      controller: descController,
+      enabled: false,
+      style: const TextStyle(
         color: Colors.white,
-        fontWeight: isEditable ? FontWeight.w600 : FontWeight.w400,
+        fontSize: 18,
+        fontWeight: FontWeight.w700,
+      ),
+      decoration: InputDecoration(
+        labelText: "Description",
+        labelStyle: const TextStyle(color: Colors.white70),
+        filled: true,
+        fillColor: Colors.white.withOpacity(0.15),
+        contentPadding: const EdgeInsets.symmetric(
+          vertical: 18, // BIG height = reliable scan
+          horizontal: 14,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderSide: const BorderSide(color: Colors.white24),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderSide: const BorderSide(
+            color: Color.fromARGB(255, 44, 117, 54),
+            width: 2,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildScanField() {
+    return TextFormField(
+      controller: scanCountController,
+      enabled: false,
+      style: const TextStyle(
+        color: Colors.white,
+        fontSize: 18,
+        fontWeight: FontWeight.w700,
+      ),
+      decoration: InputDecoration(
+        labelText: "No of Scans",
+        labelStyle: const TextStyle(color: Colors.white70),
+        filled: true,
+        fillColor: Colors.white.withOpacity(0.15),
+        contentPadding: const EdgeInsets.symmetric(
+          vertical: 18, // BIG height = reliable scan
+          horizontal: 14,
+        ),
+        enabledBorder: OutlineInputBorder(
+          borderSide: const BorderSide(color: Colors.white24),
+          borderRadius: BorderRadius.circular(12),
+        ),
+        focusedBorder: OutlineInputBorder(
+          borderSide: const BorderSide(
+            color: Color.fromARGB(255, 44, 117, 54),
+            width: 2,
+          ),
+          borderRadius: BorderRadius.circular(12),
+        ),
       ),
     );
   }
@@ -522,4 +661,47 @@ class _StockReversalPageState extends State<StockReversalPage> {
       ),
     );
   }
+}
+
+Widget _buildTextField(
+  String label,
+  TextEditingController controller,
+  bool isEditable,
+) {
+  return TextFormField(
+    controller: controller,
+    enabled: isEditable,
+    readOnly: !isEditable,
+    maxLines: 1,
+    style: TextStyle(
+      color: Colors.white,
+      fontSize: 14, // ✅ compact for 800×480
+      fontWeight: isEditable ? FontWeight.w600 : FontWeight.w400,
+    ),
+    decoration: InputDecoration(
+      labelText: label,
+      labelStyle: const TextStyle(color: Colors.white70, fontSize: 12),
+      filled: true,
+      fillColor: Colors.white.withOpacity(0.08),
+      contentPadding: const EdgeInsets.symmetric(
+        vertical: 10, // ✅ reduced height
+        horizontal: 10,
+      ),
+      enabledBorder: OutlineInputBorder(
+        borderSide: const BorderSide(color: Colors.white24),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      focusedBorder: OutlineInputBorder(
+        borderSide: const BorderSide(
+          color: Colors.deepPurpleAccent,
+          width: 1.5,
+        ),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      disabledBorder: OutlineInputBorder(
+        borderSide: const BorderSide(color: Colors.white24),
+        borderRadius: BorderRadius.circular(10),
+      ),
+    ),
+  );
 }

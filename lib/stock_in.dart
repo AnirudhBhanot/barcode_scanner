@@ -13,10 +13,16 @@ class StockInPage extends StatefulWidget {
 }
 
 class _StockInPageState extends State<StockInPage> {
+  int scanCount = 0;
+  final TextEditingController scanCountController = TextEditingController(
+    text: "0",
+  );
+
   final TextEditingController batchController = TextEditingController();
   final TextEditingController dprDateController = TextEditingController();
   final TextEditingController locController = TextEditingController();
   final TextEditingController fgLocController = TextEditingController();
+  final TextEditingController descController = TextEditingController();
   final TextEditingController rmWtController = TextEditingController();
   final TextEditingController noRemController = TextEditingController();
   final TextEditingController qtyController = TextEditingController();
@@ -27,7 +33,6 @@ class _StockInPageState extends State<StockInPage> {
   final TextEditingController totalWeightController = TextEditingController();
 
   bool isLoading = false;
-  bool isPosting = false;
 
   List<String> fgLocations = [];
   String? selectedFgLoc;
@@ -35,259 +40,405 @@ class _StockInPageState extends State<StockInPage> {
   @override
   void initState() {
     super.initState();
-    dprDateController.text = DateFormat('dd-MM-yyyy').format(DateTime.now());
+    _setCurrentDprDate();
     batchController.addListener(_checkAutoFetch);
     fgLocController.addListener(_checkAutoFetch);
     fetchTargetLocations();
   }
 
+  void _setCurrentDprDate() {
+    dprDateController.text = DateFormat('dd-MM-yyyy').format(DateTime.now());
+  }
+
+  void _clearAfterScan() {
+    batchController.clear();
+
+    // 🔥 scanner instantly ready again
+    Future.delayed(const Duration(milliseconds: 80), () {
+      FocusScope.of(context).requestFocus(FocusNode());
+    });
+  }
+
   Future<void> fetchTargetLocations() async {
     try {
-      final url = Uri.parse(
-          "http://192.168.20.27:86/api/SAP/GetTargetLocation?screen1=1");
-      final response = await http.get(url);
+      final response = await http.get(
+        Uri.parse(
+          "http://192.168.20.27:94/api/SAP/GetTargetLocation?screen1=1",
+        ),
+      );
 
       if (response.statusCode == 200) {
         final data = json.decode(response.body);
-        final List<String> locations =
-            (data['locations'] as List).map((e) => e.toString()).toList();
-
         setState(() {
-          fgLocations = locations;
+          fgLocations = (data['locations'] as List)
+              .map((e) => e.toString())
+              .toList();
         });
-      } else {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-              content: Text(
-                  "Error fetching FG Locations: ${response.statusCode}")),
-        );
       }
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text("Error fetching FG Locations: $e")),
-      );
-    }
+    } catch (_) {}
   }
 
   void _checkAutoFetch() {
-    final batch = batchController.text.trim();
-    final fgLoc = fgLocController.text.trim();
-
-    if (batch.isNotEmpty && fgLoc.isNotEmpty && !isLoading) {
+    if (batchController.text.isNotEmpty &&
+        (selectedFgLoc ?? "").isNotEmpty &&
+        !isLoading) {
       fetchSAPData();
     }
   }
 
   Future<void> fetchSAPData() async {
-    final batch = batchController.text.trim();
-    final fgLoc = selectedFgLoc ?? "";
-    final scanName = widget.scannerName;
-
-    if (batch.isEmpty || fgLoc.isEmpty) return;
+    if (isLoading) return;
 
     setState(() => isLoading = true);
 
     try {
-      final url = Uri.parse(
-          "http://192.168.20.27:86/api/SAP/GetBarcodeData?charg=$batch&lgort=$fgLoc&scanName=$scanName");
-      final response = await http.get(url);
+      final response = await http.get(
+        Uri.parse(
+          "http://192.168.20.27:94/api/SAP/GetBarcodeData"
+          "?charg=${batchController.text.trim()}"
+          "&lgort=$selectedFgLoc"
+          "&scanName=${widget.scannerName}",
+        ),
+      );
 
       if (response.statusCode == 200) {
-        final xmlDoc = xml.XmlDocument.parse(response.body);
-        final items = xmlDoc.findAllElements('item').toList();
+        final document = xml.XmlDocument.parse(response.body);
 
-        if (items.length > 1) {
-          final item = items[1];
-          setState(() {
-            locController.text = item.getElement('LOCATION')?.innerText ?? '';
-            dprDateController.text =
-                DateFormat('dd-MM-yyyy').format(DateTime.now());
-            noRemController.text = item.getElement('NO_REM')?.innerText ?? '';
-            rmWtController.text = item.getElement('RM_WT')?.innerText ?? '';
-            segmentController.text =
-                item.getElement('SEGMENT')?.innerText ?? '';
-            qtyController.text =
-                item.getElement('QUANTITY')?.innerText ?? '';
-            netWtController.text =
-                item.getElement('NETWT')?.innerText ?? '';
-            grossWtController.text =
-                item.getElement('GROSS_WT')?.innerText ?? '';
-            totalController.text =
-                item.getElement('TOTAL')?.innerText ?? '';
-            totalWeightController.text =
-                item.getElement('TOTAL_WEIGHT')?.innerText ?? '';
-          });
-        }
+        /// ✅ SHOW SUCCESS MESSAGE (LV_MESS)
+        final messageElement =
+            document.findAllElements('LV_MESS', namespace: '*').isNotEmpty
+            ? document.findAllElements('LV_MESS', namespace: '*').first
+            : null;
+
+        final message =
+            messageElement?.innerText.trim() ?? "Scanned successfully";
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("✅ $message"),
+            backgroundColor: Colors.green.shade700,
+            duration: const Duration(seconds: 2),
+          ),
+        );
+
+        /// ✅ CONTINUE NORMAL DATA FILLING
+        final items = document.findAllElements('item').toList();
+
+        if (items.isEmpty) return;
+
+        // SAP data is usually in second item
+        final item = items.length > 1 ? items[1] : items.first;
+
+        setState(() {
+          _setCurrentDprDate();
+
+          locController.text = item.getElement('LOCATION')?.innerText ?? '';
+          rmWtController.text = item.getElement('RM_WT')?.innerText ?? '';
+          noRemController.text = item.getElement('NO_REM')?.innerText ?? '';
+          qtyController.text = item.getElement('QUANTITY')?.innerText ?? '';
+          descController.text = item.getElement('BELOW_LOC')?.innerText ?? '';
+          segmentController.text = item.getElement('SEGMENT')?.innerText ?? '';
+          netWtController.text = item.getElement('NETWT')?.innerText ?? '';
+          grossWtController.text = item.getElement('GROSS_WT')?.innerText ?? '';
+          totalController.text = item.getElement('TOTAL')?.innerText ?? '';
+          totalWeightController.text =
+              item.getElement('TOTAL_WEIGHT')?.innerText ?? '';
+
+          scanCount++;
+          scanCountController.text = scanCount.toString();
+        });
+
+        _clearAfterScan();
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("❌ Scan failed: ${response.statusCode}"),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
       }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("❌ SAP XML Error: $e"),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
     } finally {
       setState(() => isLoading = false);
     }
   }
 
+  Future<void> postBarcodeData() async {
+    if (isLoading) return;
+
+    final lgort = selectedFgLoc; // or selectedPmLoc
+    final scanName = widget.scannerName;
+
+    if (lgort == null || lgort.isEmpty) {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text("Please select Location")));
+      return;
+    }
+
+    setState(() => isLoading = true);
+
+    try {
+      final uri = Uri.parse(
+        "http://192.168.20.27:94/api/SAP/PostBarcodeData"
+        "?lgort=$lgort"
+        "&scanName=$scanName",
+      );
+
+      final response = await http.post(uri);
+
+      if (response.statusCode == 200) {
+        final xmlDoc = xml.XmlDocument.parse(response.body);
+
+        final messageElement =
+            xmlDoc.findAllElements('LV_MESS', namespace: '*').isNotEmpty
+            ? xmlDoc.findAllElements('LV_MESS', namespace: '*').first
+            : null;
+
+        final message =
+            messageElement?.innerText.trim() ?? "Posted successfully";
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("✅ $message"),
+            backgroundColor: Colors.green.shade700,
+          ),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("❌ Post failed: ${response.statusCode}"),
+            backgroundColor: Colors.red.shade700,
+          ),
+        );
+      }
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text("❌ Error posting data: $e"),
+          backgroundColor: Colors.red.shade700,
+        ),
+      );
+    } finally {
+      setState(() => isLoading = false);
+    }
+  }
+
+  void clearFields() {
+    batchController.clear();
+    locController.clear();
+    fgLocController.clear();
+    rmWtController.clear();
+    noRemController.clear();
+    qtyController.clear();
+    segmentController.clear();
+    netWtController.clear();
+    grossWtController.clear();
+    descController.clear();
+    totalController.clear();
+    totalWeightController.clear();
+    selectedFgLoc = null;
+    _setCurrentDprDate();
+  }
+
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
-    final isMobile = screenWidth < 600;
-
     return Scaffold(
       extendBodyBehindAppBar: true,
+      backgroundColor: const Color(0xFF0B5D1E),
       appBar: AppBar(
-        title: const Text("Stock In",
-            style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+        title: const Text(
+          "Stock In",
+          style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600),
+        ),
         backgroundColor: Colors.transparent,
         elevation: 0,
         centerTitle: true,
-        iconTheme: const IconThemeData(color: Colors.white),
       ),
-      backgroundColor: const Color(0xFF0B5D1E),
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Color(0xFF0B5D1E), Color(0xFF1E7F35)],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
+      body: SafeArea(
+        child: Container(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              colors: [Color(0xFF0B5D1E), Color(0xFF1E7F35)],
+            ),
           ),
-        ),
-        child: Center(
-          child: LayoutBuilder(
-            builder: (context, constraints) {
-              final double cardWidth = isMobile
-                  ? screenWidth * 0.9
-                  : (constraints.maxWidth * 0.5)
-                      .clamp(500.0, 600.0)
-                      .toDouble(); // ✅ FIXED num→double
-
-              final double cardHeight = isMobile ? 750.0 : 700.0;
-
-              return Card(
-                elevation: 30,
-                shadowColor: Color(0xFF0B5D1E).withOpacity(0.5),
-                color: Colors.white.withOpacity(0.12),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(30)),
-                child: Container(
-                  width: cardWidth,
-                  height: cardHeight,
-                  padding: const EdgeInsets.all(24),
+          child: Center(
+            child: Card(
+              elevation: 25,
+              color: Colors.white.withOpacity(0.12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(30),
+              ),
+              child: Container(
+                width: 480,
+                height: 800,
+                padding: const EdgeInsets.all(18),
+                child: SingleChildScrollView(
+                  // ✅ MAIN FIX
                   child: Column(
                     children: [
-                      Expanded(
+                      /// 🔥 BIG BATCH FIELD
+                      TextFormField(
+                        controller: batchController,
+                        autofocus: true,
+                        style: _style(fontSize: 20),
+                        decoration: _decoration("Batch", scan: true),
+                      ),
+
+                      const SizedBox(height: 10),
+                      _fgDropdown(),
+
+                      const SizedBox(height: 10),
+
+                      TextFormField(
+                        controller: scanCountController,
+                        enabled: false,
+                        style: _style(fontSize: 18),
+                        decoration: _decoration("No. of Scans"),
+                      ),
+
+                      const SizedBox(height: 10),
+
+                      TextFormField(
+                        controller: descController,
+                        enabled: false,
+                        style: _style(fontSize: 18),
+                        decoration: _decoration("Description"),
+                      ),
+
+                      const SizedBox(height: 10),
+
+                      /// ✅ NON-EDITABLE GRID (SCROLL SAFE)
+                      SizedBox(
+                        height: 420, // ✅ tuned for 800×480
                         child: GridView.count(
                           crossAxisCount: 2,
                           physics: const NeverScrollableScrollPhysics(),
-                          crossAxisSpacing: 16,
-                          mainAxisSpacing: 16,
-                          childAspectRatio: isMobile ? 3.2 : 3.8,
+                          crossAxisSpacing: 12,
+                          mainAxisSpacing: 12,
+                          childAspectRatio: 3.8, // compact height
                           children: [
-                            buildTextField("Batch", batchController),
-                            buildTextField("DPR Date", dprDateController,
-                                editable: false),
-                            buildTextField("Loc.", locController,
-                                editable: false),
-                            buildDropdownField(),
-                            buildTextField("RmWt.", rmWtController,
-                                editable: false),
-                            buildTextField("No. Reams", noRemController,
-                                editable: false),
-                            buildTextField("Qty.", qtyController,
-                                editable: false),
-                            buildTextField("Segment", segmentController,
-                                editable: false),
-                            buildTextField("NetWt.", netWtController,
-                                editable: false),
-                            buildTextField("GrossWt.", grossWtController,
-                                editable: false),
-                            buildTextField("Total", totalController,
-                                editable: false),
-                            buildTextField("Total Weight",
-                                totalWeightController,
-                                editable: false),
+                            _field("DPR Date", dprDateController),
+                            _field("Loc.", locController),
+                            _field("RmWt.", rmWtController),
+                            _field("No. Reams", noRemController),
+                            _field("Qty.", qtyController),
+                            _field("Segment", segmentController),
+                            _field("NetWt.", netWtController),
+                            _field("GrossWt.", grossWtController),
+                            _field("Total", totalController),
+                            _field("Total Weight", totalWeightController),
                           ],
                         ),
                       ),
-                      const SizedBox(height: 12),
+
+                      const SizedBox(height: 14),
+
+                      /// ✅ BUTTONS ALWAYS VISIBLE
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                         children: [
-                          _buildButton("Post", Colors.deepPurpleAccent, () {}),
-                          _buildButton("Clear", Colors.blueAccent, () {}),
-                          _buildButton("Back", Colors.orangeAccent, () {
-                            Navigator.pop(context);
-                          }),
+                          _button(
+                            "Post",
+                            Colors.deepPurpleAccent,
+                            postBarcodeData,
+                          ),
+                          _button("Clear", Colors.blueAccent, clearFields),
+                          _button(
+                            "Back",
+                            Colors.orangeAccent,
+                            () => Navigator.pop(context),
+                          ),
                         ],
                       ),
+
+                      const SizedBox(height: 10),
                     ],
                   ),
                 ),
-              );
-            },
+              ),
+            ),
           ),
         ),
       ),
     );
   }
 
-  Widget buildDropdownField() {
+  Widget _field(String label, TextEditingController c) {
+    return TextFormField(
+      controller: c,
+      enabled: false,
+      style: _style(),
+      decoration: _decoration(label),
+    );
+  }
+
+  Widget _fgDropdown() {
     return DropdownButtonFormField<String>(
       value: selectedFgLoc,
       items: fgLocations
-          .map((loc) => DropdownMenuItem(value: loc, child: Text(loc)))
+          .map((e) => DropdownMenuItem(value: e, child: Text(e)))
           .toList(),
-      onChanged: (value) {
+      onChanged: (v) {
         setState(() {
-          selectedFgLoc = value;
-          fgLocController.text = value ?? "";
+          selectedFgLoc = v;
+          fgLocController.text = v ?? "";
         });
+        _checkAutoFetch();
       },
-      decoration: inputDecoration("FG Loc."),
-      dropdownColor: Color.fromARGB(255, 22, 187, 61),
-      style: const TextStyle(color: Colors.white),
+      decoration: _decoration("FG Loc.", scan: true),
+      dropdownColor: const Color(0xFF1E7F35),
+      style: _style(fontSize: 18),
       iconEnabledColor: Colors.white,
     );
   }
 
-  Widget buildTextField(String label, TextEditingController controller,
-      {bool editable = true}) {
-    return TextFormField(
-      controller: controller,
-      enabled: editable,
-      decoration: inputDecoration(label),
-      style: const TextStyle(color: Colors.white),
-    );
-  }
-
-  InputDecoration inputDecoration(String label) {
+  InputDecoration _decoration(String label, {bool scan = false}) {
     return InputDecoration(
       labelText: label,
       labelStyle: const TextStyle(color: Colors.white70),
       filled: true,
-      fillColor: Colors.white.withOpacity(0.08),
+      fillColor: Colors.white.withOpacity(scan ? 0.18 : 0.08),
+      contentPadding: const EdgeInsets.symmetric(vertical: 22, horizontal: 16),
       enabledBorder: OutlineInputBorder(
         borderSide: const BorderSide(color: Colors.white24),
         borderRadius: BorderRadius.circular(12),
       ),
       focusedBorder: OutlineInputBorder(
-        borderSide: const BorderSide(color: Color(0xFF0B5D1E),),
+        borderSide: const BorderSide(color: Colors.deepPurpleAccent, width: 2),
         borderRadius: BorderRadius.circular(12),
       ),
     );
   }
 
-  Widget _buildButton(String text, Color color, VoidCallback onPressed) {
+  TextStyle _style({double fontSize = 15}) {
+    return TextStyle(
+      color: Colors.white,
+      fontSize: fontSize,
+      fontWeight: FontWeight.w600,
+    );
+  }
+
+  Widget _button(String t, Color c, VoidCallback fn) {
     return ElevatedButton(
-      onPressed: onPressed,
+      onPressed: fn,
       style: ElevatedButton.styleFrom(
-        backgroundColor: color.withOpacity(0.9),
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(14),
-        ),
-        padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
-        elevation: 6,
+        backgroundColor: c,
+        padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
       ),
       child: Text(
-        text,
+        t,
         style: const TextStyle(
-            color: Colors.white, fontSize: 15, fontWeight: FontWeight.w600),
+          color: Colors.white,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
